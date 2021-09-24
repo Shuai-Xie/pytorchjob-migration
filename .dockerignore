@@ -1,0 +1,12 @@
+**/.git
+**/.DS_Store
+**/__pycache__
+
+.gitignore
+.dockerignore
+Dockerfile
+
+yamls/
+run.sh
+README.md
+z.py

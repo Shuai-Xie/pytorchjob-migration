@@ -1,0 +1,116 @@
+apiVersion: "kubeflow.org/v1"
+kind: "PyTorchJob"
+metadata:
+  name: "mnist-mig"
+  namespace: "default"
+spec:
+  pytorchReplicaSpecs:
+    Master:
+      replicas: 1
+      restartPolicy: OnFailure
+      template:
+        metadata:
+          annotations:
+            sidecar.istio.io/inject: "false"
+        spec:
+          volumes:
+            - name: ddp-pvc
+              persistentVolumeClaim:
+                claimName: ddp-pvc
+          containers:
+            - name: pytorch
+              image: shuaix/pytorchjob-migration:1.0
+              imagePullPolicy: IfNotPresent
+              command:
+                [
+                  "sh",
+                  "-c",
+                  "python mnist_ddp_mp.py --nnodes=4 --nproc_per_node=1 --node_rank=${RANK} --dist-url=tcp://10.252.192.48:22222 --epochs=10 --batch-size=256",
+                ]
+              lifecycle:
+                postStart:
+                  exec:
+                    command:
+                      [
+                        "sh",
+                        "-c",
+                        'exec > /mnt/postStart.log; echo "start:" `date`',
+                      ]
+                preStop:
+                  exec:
+                    command:
+                      [
+                        "sh",
+                        "-c",
+                        'exec > /mnt/preStop.log; echo "stop:" `date`; python -u prestop.py',
+                      ]
+              resources:
+                limits:
+                  nvidia.com/gpu: 1
+              volumeMounts:
+                - mountPath: /mnt
+                  name: ddp-pvc
+              env:
+                - name: MIGRATION_CKPT_PATH
+                  value: "/mnt/migration.pth"
+                - name: MIGRATION_SIGNAL_PATH
+                  value: "/mnt/signal"
+          hostIPC: true
+          hostNetwork: true
+          dnsPolicy: "ClusterFirstWithHostNet"
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: kubernetes.io/hostname
+                        operator: In
+                        values:
+                          - gpu-10-252-192-48 # limit master must be 48
+                          # - gpu-10-252-192-49
+    Worker:
+      replicas: 3
+      restartPolicy: OnFailure
+      template:
+        metadata:
+          annotations:
+            sidecar.istio.io/inject: "false"
+        spec:
+          volumes:
+            - name: ddp-pvc
+              persistentVolumeClaim:
+                claimName: ddp-pvc
+          containers:
+            - name: pytorch
+              image: shuaix/pytorchjob-migration:1.0
+              imagePullPolicy: IfNotPresent
+              command:
+                [
+                  "sh",
+                  "-c",
+                  "python mnist_ddp_mp.py --nnodes=4 --nproc_per_node=1 --node_rank=${RANK} --dist-url=tcp://10.252.192.48:22222 --epochs=10 --batch-size=256",
+                ]
+              resources:
+                limits:
+                  nvidia.com/gpu: 1
+              volumeMounts: # need pvc to load model!
+                - mountPath: /mnt
+                  name: ddp-pvc
+              env:
+                - name: MIGRATION_CKPT_PATH
+                  value: "/mnt/migration.pth"
+                - name: MIGRATION_SIGNAL_PATH
+                  value: "/mnt/signal"
+          hostIPC: true
+          hostNetwork: true
+          dnsPolicy: "ClusterFirstWithHostNet"
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: kubernetes.io/hostname
+                        operator: In
+                        values:
+                          - gpu-10-252-192-48
+                          # - gpu-10-252-192-49
