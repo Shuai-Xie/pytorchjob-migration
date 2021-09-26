@@ -36,8 +36,8 @@ if migrator.resume:  # note: migrate_ckpt has higher priority than args.ckpt
 
 Note:
 
-- This solution imports a singleton migrator to register values, which can be reused in multiple python modules.
-- But limitation is that `migrator.load_ckpt()` have to be invoked when all the migration variables have been registered.
+- This solution imports a singleton migrator to register values, which can be reused in other python modules without instantiation.
+- However, the limitation is that `migrator.load_ckpt()` have to be invoked after all the migration variables have been registered.
 
 
 ## Example
