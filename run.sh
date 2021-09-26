@@ -1,5 +1,5 @@
 # SP (Single Process)
-CUDA_VISIBLE_DEVICES=0 python mnist_dp.py --epochs=2 --batch-size=256
+CUDA_VISIBLE_DEVICES=0 python mnist_dp.py --epochs=10 --batch-size=256
 
 # DP
 python mnist_dp.py --epochs=10 --batch-size=256

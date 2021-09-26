@@ -24,21 +24,13 @@ spec:
               command:
                 ["python", "mnist_dp.py", "--epochs=10", "--batch-size=256"]
               lifecycle: # only in master is enough
-                postStart:
-                  exec:
-                    command:
-                      [
-                        "sh",
-                        "-c",
-                        'exec > /mnt/postStart.log; echo "start:" `date`',
-                      ]
                 preStop:
                   exec:
                     command:
                       [
                         "sh",
                         "-c",
-                        'exec > /mnt/preStop.log; echo "stop:" `date`; python -u prestop.py',
+                        'exec > /mnt/preStop.log; python -u prestop.py',
                       ]
               resources:
                 limits:

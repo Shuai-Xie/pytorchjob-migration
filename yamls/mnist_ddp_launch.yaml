@@ -29,21 +29,13 @@ spec:
                   "--batch-size=256",
                 ]
               lifecycle: # only in master is enough
-                postStart:
-                  exec:
-                    command:
-                      [
-                        "sh",
-                        "-c",
-                        'exec > /mnt/postStart.log; echo "start:" `date`',
-                      ]
                 preStop:
                   exec:
                     command:
                       [
                         "sh",
                         "-c",
-                        'exec > /mnt/preStop.log; echo "stop:" `date`; python -u prestop.py',
+                        'exec > /mnt/preStop.log; python -u prestop.py',
                       ]
               resources:
                 limits:
@@ -66,8 +58,8 @@ spec:
                         operator: In
                         values:
                           # - gpu-10-252-192-47
-                          # - gpu-10-252-192-48
-                          - gpu-10-252-192-49
+                          - gpu-10-252-192-48
+                          # - gpu-10-252-192-49
 
     Worker:
       replicas: 3
@@ -113,5 +105,5 @@ spec:
                         operator: In
                         values:
                           # - gpu-10-252-192-47
-                          # - gpu-10-252-192-48
-                          - gpu-10-252-192-49
+                          - gpu-10-252-192-48
+                          # - gpu-10-252-192-49

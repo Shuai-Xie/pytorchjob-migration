@@ -5,89 +5,127 @@ from threading import Thread
 
 import torch
 
+__all__ = ['MigratableVariable']
+
+# ckpt
+ckpt_path = os.environ.get('MIGRATION_CKPT_PATH', './ckpts/migration.pth')
+signal_path = os.environ.get('MIGRATION_SIGNAL_PATH', './ckpts/signal')
+os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
+os.makedirs(os.path.dirname(signal_path), exist_ok=True)
+
+# DDP configs
+rank = 0
+map_location = 'cpu'
+
 
 def curtime():
     return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
 
 
-class Migrator:
-    """
-    Migration is triggered by three singals:
-    1. init: start listening.
-    2. save: prestop writes save signal, save ckpt and exits.
-    3. resume: main reads resume signal, load ckpt and continue training.
+class Migratable:
+    _instance = None
+    migrations = []
+    count = 0
+    resume = False
 
-    We need save signal to file, cus we need this signal when relaunching training.
-    If signal is a variable not read from file, we'll lose the signal set by last training.
-    """
-    def __init__(self) -> None:
-        self.ckpt_path = os.environ.get('MIGRATION_CKPT_PATH',
-                                        './ckpts/migration.pth')
-        self.signal_path = os.environ.get('MIGRATION_SIGNAL_PATH',
-                                          './ckpts/signal')
-        os.makedirs(os.path.dirname(self.ckpt_path), exist_ok=True)
-        os.makedirs(os.path.dirname(self.signal_path), exist_ok=True)
-        if not os.path.exists(self.signal_path):
-            self.write_signal('init')  # only init at 1st time
-        self.migrations = {}
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = object.__new__(cls)
+        cls.count += 1  # count the variable number
+        return cls._instance
 
-    @property
-    def signal(self):  # 同一 signal 文件路径，1个可供多进程操作的单例属性
-        return self.read_signal()
-
-    @property
-    def resume(self):
-        return self.signal == 'resume'
-
-    def write_signal(self, signal: str):
-        with open(self.signal_path, 'w') as f:
-            f.write(signal)
-
-    def read_signal(self):
-        with open(self.signal_path, 'r') as f:
-            signal = f.readline()
-            return signal
-
-    def register(self, key: str, val):
-        self.migrations[key] = val
-
-    def _listen(self, interval=1):  # signal 状态机
-        while True:
-            if self.signal == 'save':  # save -> save_ckpt() -> resume
-                print(curtime(), 'save migrate ckpt')
-                self.save_ckpt()
-                print(curtime(), 'saved ckpt!')
-                break
-            # 为了确保 load_ckpt 在 main process 使用前执行；将 resume 过程放到 main process
-            # elif signal == 'resume':  # resume -> load_ckpt() -> init
-            #     print(curtime(), 'resume migrate ckpt')
-            #     self.load_ckpt()
-            time.sleep(interval)
-
-    def listening(self, interval=1):
-        self.th = Thread(target=self._listen, args=(interval, ), daemon=True)
-        self.th.start()
-
-    def save_ckpt(self):
-        for k, v in self.migrations.items():
-            if hasattr(v, 'state_dict'):
-                self.migrations[k] = v.state_dict()
-        torch.save(self.migrations, self.ckpt_path)
-        self.write_signal('resume')
-
-    def load_ckpt(self, map_location='cpu'):
-        ckpt = torch.load(self.ckpt_path, map_location=map_location)
-        for k, v in self.migrations.items():
-            if hasattr(v, 'state_dict'):
-                self.migrations[k].load_state_dict(ckpt[k])
-            elif isinstance(v, dict):
-                self.migrations[k].update(ckpt[k])  # only support dict
+    def __init__(self, var):
+        idx = self.count - 1
+        if self.resume and self.count <= len(self.migrations):  # load old var
+            if hasattr(var, 'state_dict'):
+                var.load_state_dict(self.migrations[idx])
+            elif isinstance(var, dict):
+                var.update(self.migrations[idx])
+                print('load dict:', var)
             else:
                 warnings.warn(
                     'only support dict now, this value cannot be recoverd')
-                print(k, v)
-        self.write_signal('init')
+            self.migrations[idx] = var
+        else:
+            self.migrations.append(var)  # add new val
 
 
-# singleton varible
-migrator = Migrator()
+def MigratableVariable(x):
+    if Migratable.count == 0:  # 1st invoke
+        if not os.path.exists(signal_path):
+            write_signal('init')  # write the initial value if not exists
+
+        # load ckpt if exits
+        # note: can't be in thread, we must ensure ckpt is loaded before Migratable(x)
+        if read_signal() == 'resume':
+            print(curtime(), 'loading ckpt...')
+            load_ckpt()
+            write_signal('init')
+            print(curtime(), 'loaded ckpt!')
+
+        if rank == 0:
+            listen_signal()
+
+    Migratable(x)
+    return x
+
+
+"""signals"""
+
+
+def read_signal():
+    with open(signal_path, 'r') as f:
+        signal = f.readline()
+        return signal
+
+
+def write_signal(signal: str):
+    with open(signal_path, 'w') as f:
+        f.write(signal)
+
+
+def prestop_signal(interval=1):
+    write_signal('save')
+    while True:
+        if read_signal() == 'resume':
+            print(curtime(), 'saved ckpt!')
+            break
+        print(curtime(), 'saving ckpt...')
+        time.sleep(interval)
+
+
+def listen_signal(interval=1):
+    def listen():
+        while True:
+            if read_signal() == 'save':
+                print(curtime(), 'saving ckpt...')
+                save_ckpt()
+                write_signal('resume')
+                print(curtime(), 'saved ckpt!')  # exit thread
+                # break  # make this keep listening and exit with main thread
+            time.sleep(interval)
+
+    th = Thread(target=listen, daemon=True)
+    th.start()
+
+
+"""ckpts"""
+
+
+def save_ckpt():
+    ckpts = []
+    for v in Migratable.migrations:
+        if hasattr(v, 'state_dict'):
+            ckpts.append(v.state_dict())
+        elif isinstance(v, dict):
+            ckpts.append(v)
+        else:
+            warnings.warn(
+                'only support dict now, this value cannot be recoverd')
+    torch.save(ckpts, ckpt_path)
+
+
+def load_ckpt():
+    ckpt = torch.load(ckpt_path, map_location=map_location)
+    Migratable.migrations = ckpt
+    Migratable.resume = True

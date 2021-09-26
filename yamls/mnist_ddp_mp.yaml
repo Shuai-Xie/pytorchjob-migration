@@ -28,21 +28,13 @@ spec:
                   "python mnist_ddp_mp.py --nnodes=4 --nproc_per_node=1 --node_rank=${RANK} --dist-url=tcp://10.252.192.48:22222 --epochs=10 --batch-size=256",
                 ]
               lifecycle:
-                postStart:
-                  exec:
-                    command:
-                      [
-                        "sh",
-                        "-c",
-                        'exec > /mnt/postStart.log; echo "start:" `date`',
-                      ]
                 preStop:
                   exec:
                     command:
                       [
                         "sh",
                         "-c",
-                        'exec > /mnt/preStop.log; echo "stop:" `date`; python -u prestop.py',
+                        'exec > /mnt/preStop.log; python -u prestop.py',
                       ]
               resources:
                 limits:

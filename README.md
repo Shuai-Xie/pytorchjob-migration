@@ -8,36 +8,52 @@ Training a task on k8s may face unexpected fault like the endpoint nodes breakin
 
 However, container dynamic migration is not mature now, as discussed in this pytorch-operator [issue #356](https://github.com/kubeflow/pytorch-operator/issues/356). 
 
-To go around this problem, we try to trigger a checkpoint event when a pytrochjob pod in `Terminating`  status, which is realized with `preStop` container hook.
+To go around this problem, we try to trigger a checkpoint event when the pytrochjob master pod is in `Terminating`  status. This is realized with the help of `preStop` container hook.
 
 
 
 ## Usage
 
-To use this migration feature, users need to register migration variables in the beginning. Currenly, we only support pass-by-reference types like `dict` or `list`.
+To use this migration feature, users need to register migration variables in the beginning. Currenly, we only support pass-by-reference types like `dict`.
 
-For example, `model`, `optimizer` and `metrics` in the following code are migration variables, which can be recovered when job migration occurs.
+For example, `model`, `optimizer` and `metrics` in the following code are migratable variables, which can be recovered when job migration occurs.
+
+- Single Process
 
 ```python
 # metircs to be recorded
 metircs = {'epoch': -1, 'best_epoch': -1, 'best_acc': 0.}
 
-# A migrator helps training models on k8s more secure.
-from migration import migrator
-migrator.register('model', model)
-migrator.register('optimizer', optimizer)
-migrator.register('metircs', metircs)
-migrator.listening()
-if migrator.resume:  # note: migrate_ckpt has higher priority than args.ckpt
-    migrator.load_ckpt()  # load ckpt at all ranks
-    print('load migration ckpt from epoch {}, metrics: {}'.format(
-        metircs['epoch'], metircs))
+# migration
+from migration import MigratableVariable
+model = MigratableVariable(model)
+optimizer = MigratableVariable(optimizer)
+metircs = MigratableVariable(metircs)
 ```
+
+- Multiple Process (DDP)
+
+```python
+# metircs to be recorded
+metircs = {'epoch': -1, 'best_epoch': -1, 'best_acc': 0.}
+
+# migration
+import migration
+migration.rank = args.rank  # record rank
+
+from migration import MigratableVariable
+model = MigratableVariable(model)
+optimizer = MigratableVariable(optimizer)
+metircs = MigratableVariable(metircs)
+```
+
 
 Note:
 
-- This solution imports a singleton migrator to register values, which can be reused in other python modules without instantiation.
-- However, the limitation is that `migrator.load_ckpt()` have to be invoked after all the migration variables have been registered.
+- This solution implements `MigratableVariable` with combination function and singleton class, which can be used in multiple python modules.
+- Also, users don't need care when to save and load the checkpoint. Because
+  - `save` will be triggered automatically by `preStop` container hook,
+  - `load` will be triggered automatically when relaunch the pytorchjob.
 
 
 ## Example
@@ -64,32 +80,27 @@ mnist-launch-worker-1   1/1     Terminating   0          3m18s   10.100.59.136  
 mnist-launch-worker-2   1/1     Terminating   0          3m18s   10.100.59.132   gpu-10-252-192-48
 
 # training stops
-Train Epoch: 4 [0/59]   loss=0.2813
-Train Epoch: 4 [10/59]  loss=0.2778
-Train Epoch: 4 [20/59]  loss=0.2248
-Train Epoch: 4 [30/59]  loss=0.3184
-Train Epoch: 4 [40/59]  loss=0.2645
-Train Epoch: 4 [50/59]  loss=0.3380
-Train Epoch: 4 [58/59]  loss=0.2972
-Test Epoch: 4 [0/40]    acc=88.2812
-2021-09-24 11:07:58 save migrate ckpt		# checkpoint event is triggered
-2021-09-24 11:07:59 saved ckpt!
-Test Epoch: 4 [10/40]   acc=86.0085
-Test Epoch: 4 [20/40]   acc=86.1049
+Test Epoch: 0, acc=80.5900
+test acc: 80.59, best acc: 80.59
+save ckpt at epoch 0
+Train Epoch: 1 [0/59]   loss=0.5095
+Train Epoch: 1 [10/59]  loss=0.4916
+Train Epoch: 1 [20/59]  loss=0.4436
+Train Epoch: 1 [30/59]  loss=0.3948
+Train Epoch: 1 [40/59]  loss=0.5298
+2021-09-26 14:50:18 saving ckpt...      # checkpoint event is triggered
+2021-09-26 14:50:19 saved ckpt!
+Train Epoch: 1 [50/59]  loss=0.3772
+Train Epoch: 1 [58/59]  loss=0.3754
 
 # migration state we save in pvc
--rw-r--r-- 1 root root 89505767 Sep 24 19:07 migration.pth
--rw-r--r-- 1 root root       36 Sep 24 19:04 postStart.log
--rw-r--r-- 1 root root      105 Sep 24 19:07 preStop.log
--rw-r--r-- 1 root root        6 Sep 24 19:07 signal
-
-$ cat postStart.log
-start: Fri Sep 24 11:04:45 UTC 2021
+-rw-r--r-- 1 root root 89505703 Sep 26 22:50 migration.pth
+-rw-r--r-- 1 root root       67 Sep 26 22:50 preStop.log
+-rw-r--r-- 1 root root        6 Sep 26 22:50 signal
 
 $ cat preStop.log
-stop: Fri Sep 24 11:07:57 UTC 2021
-2021-09-24 11:07:58 saving ckpts...
-2021-09-24 11:07:59 finish ckpts!
+2021-09-26 14:50:18 saving ckpt...
+2021-09-26 14:50:19 saved ckpt!
 
 $ cat signal
 resume
@@ -109,22 +120,24 @@ mnist-launch-worker-1   1/1     Running   2          3m19s   10.100.59.63    gpu
 mnist-launch-worker-2   1/1     Running   3          3m19s   10.100.59.24    gpu-10-252-192-49
 
 # and training resumes.
-load migration ckpt from epoch 4, metrics: {'epoch': 4, 'best_epoch': 3, 'best_acc': 85.56}
+2021-09-26 14:52:04 loading ckpt...
+2021-09-26 14:52:04 loaded ckpt!
+load dict: {'epoch': 0, 'best_epoch': 0, 'best_acc': 80.59}
 
 training
-Train Epoch: 5 [0/59]   loss=0.3343
-Train Epoch: 5 [10/59]  loss=0.3286
-Train Epoch: 5 [20/59]  loss=0.2807
-Train Epoch: 5 [30/59]  loss=0.3667
-Train Epoch: 5 [40/59]  loss=0.3388
-Train Epoch: 5 [50/59]  loss=0.3381
-Train Epoch: 5 [58/59]  loss=0.3596
-Test Epoch: 5 [0/40]    acc=86.3281
-Test Epoch: 5 [10/40]   acc=86.0440
-Test Epoch: 5 [20/40]   acc=85.3051
-Test Epoch: 5 [30/40]   acc=85.3075
-Test Epoch: 5 [39/40]   acc=85.4500
-Test Epoch: 5, acc=85.4500
-test acc: 85.45, best acc: 85.45
-save ckpt at epoch 5
+Train Epoch: 1 [0/59]   loss=0.4146
+Train Epoch: 1 [10/59]  loss=0.4130
+Train Epoch: 1 [20/59]  loss=0.3693
+Train Epoch: 1 [30/59]  loss=0.3137
+Train Epoch: 1 [40/59]  loss=0.4815
+Train Epoch: 1 [50/59]  loss=0.3160
+Train Epoch: 1 [58/59]  loss=0.2624
+Test Epoch: 1 [0/40]    acc=86.3281
+Test Epoch: 1 [10/40]   acc=85.7244
+Test Epoch: 1 [20/40]   acc=85.4539
+Test Epoch: 1 [30/40]   acc=85.4461
+Test Epoch: 1 [39/40]   acc=85.5300
+Test Epoch: 1, acc=85.5300
+test acc: 85.53, best acc: 85.53
+save ckpt at epoch 1
 ```
