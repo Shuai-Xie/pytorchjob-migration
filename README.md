@@ -8,15 +8,17 @@ Training a task on k8s may face unexpected fault like the endpoint nodes breakin
 
 However, container dynamic migration is not mature now, as discussed in this pytorch-operator [issue #356](https://github.com/kubeflow/pytorch-operator/issues/356). 
 
-To go around this problem, we try to trigger a checkpoint event when a pytrochjob pod in `Terminating`  status, which is realized with `preStop` container hook.
+To go around this problem, we try to trigger a checkpoint event when pytrochjob master pod is in `Terminating`  status. This is realized with the help of `preStop` container hook.
 
 
 
 ## Usage
 
-To use this migration feature, users need to register migration variables in the beginning. Currenly, we only support pass-by-reference types like `dict` or `list`.
+To use this migration feature, users need to register migration variables in the beginning. Currenly, we only support pass-by-reference types like `dict`.
 
-For example, `model`, `optimizer` and `metrics` in the following code are migration variables, which can be recovered when job migration occurs.
+For example, `model`, `optimizer` and `metrics` in the following code are migratable variables, which can be recovered when job migration occurs.
+
+- Single Process
 
 ```python
 # metircs to be recorded
@@ -28,6 +30,25 @@ migrator.register('model', model)
 migrator.register('optimizer', optimizer)
 migrator.register('metircs', metircs)
 migrator.listening()
+if migrator.resume:  # note: migrate_ckpt has higher priority than args.ckpt
+    migrator.load_ckpt()  # load ckpt at all ranks
+    print('load migration ckpt from epoch {}, metrics: {}'.format(
+        metircs['epoch'], metircs))
+```
+
+- Multiple Process (DDP)
+
+```python
+# metircs to be recorded
+metircs = {'epoch': -1, 'best_epoch': -1, 'best_acc': 0.}
+
+# A migrator helps training models on k8s more secure.
+from migration import migrator
+migrator.register('model', model)
+migrator.register('optimizer', optimizer)
+migrator.register('metircs', metircs)
+if args.rank == 0:
+    migrator.listening()
 if migrator.resume:  # note: migrate_ckpt has higher priority than args.ckpt
     migrator.load_ckpt()  # load ckpt at all ranks
     print('load migration ckpt from epoch {}, metrics: {}'.format(
