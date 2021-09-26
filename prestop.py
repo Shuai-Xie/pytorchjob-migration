@@ -1,13 +1,11 @@
 import time
 
-from migration import Migrator
-from utils import curtime
+from migration import curtime, migrator
 
-mig = Migrator()
-mig.write_signal('save')
+migrator.write_signal('save')
 
 while True:
-    if mig.resume:
+    if migrator.resume:
         print(curtime(), 'finish ckpts!')
         break
     print(curtime(), 'saving ckpts...')

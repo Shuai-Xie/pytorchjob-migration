@@ -23,7 +23,7 @@ For example, `model`, `optimizer` and `metrics` in the following code are migrat
 metircs = {'epoch': -1, 'best_epoch': -1, 'best_acc': 0.}
 
 # A migrator helps training models on k8s more secure.
-migrator = Migrator()
+from migration import migrator
 migrator.register('model', model)
 migrator.register('optimizer', optimizer)
 migrator.register('metircs', metircs)
@@ -34,6 +34,10 @@ if migrator.resume:  # note: migrate_ckpt has higher priority than args.ckpt
         metircs['epoch'], metircs))
 ```
 
+Note:
+
+- This solution imports a singleton migrator to register values, which can be reused in multiple python modules.
+- But limitation is that `migrator.load_ckpt()` have to be invoked when all the migration variables have been registered.
 
 
 ## Example
@@ -72,11 +76,6 @@ Test Epoch: 4 [0/40]    acc=88.2812
 2021-09-24 11:07:59 saved ckpt!
 Test Epoch: 4 [10/40]   acc=86.0085
 Test Epoch: 4 [20/40]   acc=86.1049
-Test Epoch: 4 [30/40]   acc=86.1643
-Test Epoch: 4 [39/40]   acc=86.1600
-Test Epoch: 4, acc=86.1600
-test acc: 86.16, best acc: 86.16
-save ckpt at epoch 4
 
 # migration state we save in pvc
 -rw-r--r-- 1 root root 89505767 Sep 24 19:07 migration.pth

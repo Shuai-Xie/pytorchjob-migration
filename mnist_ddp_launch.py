@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.nn.parallel import DistributedDataParallel
 
-from migration import Migrator
+from migration import migrator
 from models.resnet import *
 from utils import *
 
@@ -80,7 +80,6 @@ def run(args):
 
     # migration helper starts
     # A migrator helps training models on k8s more secure.
-    migrator = Migrator()
     migrator.register('model', model)
     migrator.register('optimizer', optimizer)
     migrator.register('metircs', metircs)

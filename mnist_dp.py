@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.nn.parallel import DataParallel
 
-from migration import Migrator
+from migration import migrator
 from models.resnet import *
 from utils import *
 
@@ -56,13 +56,12 @@ def run(args):
             metircs['epoch'], metircs))
 
     # A migrator helps training models on k8s more secure.
-    migrator = Migrator()
     migrator.register('model', model)
     migrator.register('optimizer', optimizer)
     migrator.register('metircs', metircs)
     migrator.listening()
     if migrator.resume:  # note: migrate_ckpt has higher priority than args.ckpt
-        migrator.load_ckpt()  # load ckpt at all ranks
+        migrator.load_ckpt()
         print('load migration ckpt from epoch {}, metrics: {}'.format(
             metircs['epoch'], metircs))
     # migration part

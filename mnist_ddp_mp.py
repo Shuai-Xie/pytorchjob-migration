@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.nn.parallel import DistributedDataParallel
 
-from migration import Migrator
+from migration import migrator
 from models.resnet import *
 from utils import *
 
@@ -95,7 +95,6 @@ def run(local_rank, args):
 
     # migration helper starts
     # A migrator helps training models on k8s more secure.
-    migrator = Migrator()
     migrator.register('model', model)
     migrator.register('optimizer', optimizer)
     migrator.register('metircs', metircs)
@@ -120,7 +119,7 @@ def run(local_rank, args):
               args.rank == 0)
         # record epoch
         metircs['epoch'] = epoch  # todo 容易少训练 1个 epoch
-        
+
         if args.rank == 0:
             test_acc = test(args, model, test_loader, epoch)
             if test_acc >= best_acc:

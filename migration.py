@@ -1,10 +1,13 @@
 import os
 import time
+import warnings
 from threading import Thread
 
 import torch
 
-from utils import curtime, mkdir
+
+def curtime():
+    return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
 
 
 class Migrator:
@@ -13,14 +16,17 @@ class Migrator:
     1. init: start listening.
     2. save: prestop writes save signal, save ckpt and exits.
     3. resume: main reads resume signal, load ckpt and continue training.
+
+    We need save signal to file, cus we need this signal when relaunching training.
+    If signal is a variable not read from file, we'll lose the signal set by last training.
     """
     def __init__(self) -> None:
         self.ckpt_path = os.environ.get('MIGRATION_CKPT_PATH',
                                         './ckpts/migration.pth')
         self.signal_path = os.environ.get('MIGRATION_SIGNAL_PATH',
                                           './ckpts/signal')
-        mkdir(os.path.dirname(self.ckpt_path))
-        mkdir(os.path.dirname(self.signal_path))
+        os.makedirs(os.path.dirname(self.ckpt_path), exist_ok=True)
+        os.makedirs(os.path.dirname(self.signal_path), exist_ok=True)
         if not os.path.exists(self.signal_path):
             self.write_signal('init')  # only init at 1st time
         self.migrations = {}
@@ -74,6 +80,14 @@ class Migrator:
         for k, v in self.migrations.items():
             if hasattr(v, 'state_dict'):
                 self.migrations[k].load_state_dict(ckpt[k])
-            else:
+            elif isinstance(v, dict):
                 self.migrations[k].update(ckpt[k])  # only support dict
+            else:
+                warnings.warn(
+                    'only support dict now, this value cannot be recoverd')
+                print(k, v)
         self.write_signal('init')
+
+
+# singleton varible
+migrator = Migrator()
